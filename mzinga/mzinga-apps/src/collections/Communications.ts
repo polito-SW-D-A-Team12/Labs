@@ -31,101 +31,80 @@ const Communications: CollectionConfig = {
   hooks: {
     afterChange: [
       async ({ doc }) => {
+        console.log("[COMM afterChange] executed");
+        console.log("[COMM afterChange] doc.id:", doc.id);
+        console.log("[COMM afterChange] doc.status:", doc.status);
+        console.log(
+          "[COMM afterChange] COMMUNICATIONS_EXTERNAL_WORKER:",
+          process.env.COMMUNICATIONS_EXTERNAL_WORKER,
+        );
+        const { tos, ccs, bccs, subject, body } = doc;
+
+        // Guard: skip if status was already written by this hook or the worker
         if (doc.status === "pending" || doc.status === "sent") {
+          console.log("[COMM afterChange] skipped because status is:", doc.status);
           return doc;
         }
 
         if (process.env.COMMUNICATIONS_EXTERNAL_WORKER === "true") {
-          await payload.update({
-            collection: Slugs.Communications,
-            id: doc.id,
-            data: {
-              status: "pending",
-            },
-          });
-
+          console.log("[COMM afterChange] trying to set status=pending");
+          try {
+            await payload.update({
+              collection: Slugs.Communications,
+              id: doc.id,
+              data: { status: "pending" },
+            });
+            console.log("[COMM afterChange] status=pending update completed");
+          } catch (err) {
+            console.error("[COMM afterChange] status=pending update FAILED:", err);
+            throw err;
+          }
           return doc;
         }
+        console.log("[COMM afterChange] external worker disabled; using in-process email path");
 
-        const { tos, ccs, bccs, subject, body } = doc;
-
+        // Original in-process email sending path
         for (const part of body) {
-          if (part.type !== "upload") {
-            continue;
-          }
-
+          if (part.type !== "upload") { continue; }
           const relationToSlug = part.relationTo;
-          const doc = await payload.findByID({
+          const uploadDoc = await payload.findByID({
             collection: relationToSlug,
             id: part.value.id,
           });
-
-          part.value = {
-            ...part.value,
-            ...doc,
-          };
+          part.value = { ...part.value, ...uploadDoc };
         }
-
         const html = TextUtils.Serialize(body || "");
-
         try {
           const users = await payload.find({
             collection: tos[0].relationTo,
-            where: {
-              id: {
-                in: tos.map((to) => to.value.id || to.value).join(","),
-              },
-            },
+            where: { id: { in: tos.map((to) => to.value.id || to.value).join(",") } },
           });
-
           const usersEmails = users.docs.map((u) => u.email);
-
           if (!usersEmails.length) {
             throw new Error("No valid email addresses found for 'tos' users.");
           }
-
           let cc;
-
           if (ccs) {
-            const copiedusers = await payload.find({
+            const copiedUsers = await payload.find({
               collection: ccs[0].relationTo,
-              where: {
-                id: {
-                  in: ccs.map((cc) => cc.value.id).join(","),
-                },
-              },
+              where: { id: { in: ccs.map((cc) => cc.value.id).join(",") } },
             });
-
-            cc = copiedusers.docs.map((u) => u.email).join(",");
+            cc = copiedUsers.docs.map((u) => u.email).join(",");
           }
-
           let bcc;
-
           if (bccs) {
-            const blindcopiedusers = await payload.find({
+            const blindCopiedUsers = await payload.find({
               collection: bccs[0].relationTo,
-              where: {
-                id: {
-                  in: bccs.map((bcc) => bcc.value.id).join(","),
-                },
-              },
+              where: { id: { in: bccs.map((bcc) => bcc.value.id).join(",") } },
             });
-
-            bcc = blindcopiedusers.docs.map((u) => u.email).join(",");
+            bcc = blindCopiedUsers.docs.map((u) => u.email).join(",");
           }
-
           const promises = [];
-
           for (const to of usersEmails) {
             const message = {
               from: payload.emailOptions.fromAddress,
-              subject,
-              to,
-              cc,
-              bcc,
-              html,
+              subject, to, cc, bcc, html,
             };
-
             promises.push(
               MailUtils.sendMail(payload, message).catch((e) => {
                 MZingaLogger.Instance?.error(`[Communications:err] ${e}`);
@@ -133,31 +112,23 @@ const Communications: CollectionConfig = {
               }),
             );
           }
-
           await Promise.all(promises.filter((p) => Boolean(p)));
-
           await payload.update({
             collection: Slugs.Communications,
             id: doc.id,
-            data: {
-              status: "sent",
-            },
+            data: { status: "sent" },
           });
-
           return doc;
         } catch (err) {
-          if (err.response && err.response.body && err.response.body.errors) {
+          if (err.response?.body?.errors) {
             err.response.body.errors.forEach((error) =>
               MZingaLogger.Instance?.error(
-                `[Communications:err]
-                    ${error.field}
-                    ${error.message}`,
+                `[Communications:err] ${error.field} ${error.message}`,
               ),
             );
           } else {
             MZingaLogger.Instance?.error(`[Communications:err] ${err}`);
           }
-
           throw err;
         }
       },

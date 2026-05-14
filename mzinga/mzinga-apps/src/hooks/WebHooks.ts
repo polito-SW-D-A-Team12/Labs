@@ -149,7 +149,19 @@ export class WebHooks {
           };
         })
         .filter(Boolean);
-      originalHooks[hookType] = [].concat(hooks[hookType] || [], hooks);
+      console.log(
+        "[WebHooks] Adding hooks",
+        envUrlsKey,
+        "existing:",
+        originalHooks[hookType]?.length || 0,
+        "new:",
+        hooks.length,
+      );
+
+      originalHooks[hookType] = [
+        ...(originalHooks[hookType] || []),
+        ...hooks,
+      ];
     }
     return originalHooks;
   }
