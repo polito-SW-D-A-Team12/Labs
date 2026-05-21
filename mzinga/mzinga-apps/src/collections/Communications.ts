@@ -30,22 +30,30 @@ const Communications: CollectionConfig = {
   },
   hooks: {
     afterChange: [
-      async ({ doc }) => {
-        if (doc.status === "pending" || doc.status === "sent") {
-          return doc;
-        }
-
-        if (process.env.COMMUNICATIONS_EXTERNAL_WORKER === "true") {
-          await payload.update({
-            collection: Slugs.Communications,
-            id: doc.id,
-            data: {
+      async ({ doc, operation }) => {
+         if (
+            process.env.COMMUNICATIONS_EXTERNAL_WORKER === "true" &&
+            operation === "create" &&
+            !doc.status
+          ) {
+            await payload.update({
+              collection: Slugs.Communications,
+              id: doc.id,
+              data: {
+                status: "pending",
+              },
+            });
+            return {
+              ...doc,
               status: "pending",
-            },
-          });
-
-          return doc;
-        }
+            };
+          }
+          if (process.env.COMMUNICATIONS_EXTERNAL_WORKER === "true") {
+            return doc;
+          }
+          if (doc.status === "pending" || doc.status === "sent") {
+            return doc;
+          }
 
         const { tos, ccs, bccs, subject, body } = doc;
 
