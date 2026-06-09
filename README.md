@@ -8,3 +8,10 @@ This lab demonstrates different deployment strategies using Kubernetes and Minik
 
 ```text
 lab4
+```
+
+## Project Location
+
+```text
+mzinga/lab4-k8s/
+```
